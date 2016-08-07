@@ -31,7 +31,8 @@ from charmhelpers.core.host import (
     service_stop,
     service_running,
     path_hash,
-    set_nic_mtu
+    set_nic_mtu,
+    lsb_release
 )
 from charmhelpers.fetch import (
     apt_cache,
@@ -100,12 +101,13 @@ def configure_pg_sources():
         log('Unable to update /etc/apt/sources.list')
 
 
-def configure_analyst_opsvm(opsvm_ip):
+def configure_analyst_opsvm():
     '''
     Configures Anaylyst for OPSVM
     '''
     if not service_running('plumgrid'):
         restart_pg()
+    opsvm_ip = pg_edge_context._pg_dir_context()['opsvm_ip']
     NS_ENTER = ('/opt/local/bin/nsenter -t $(ps ho pid --ppid '
                 '$(cat /var/run/libvirt/lxc/plumgrid.pid)) -m -n -u -i -p ')
     sigmund_stop = NS_ENTER + '/usr/bin/service plumgrid-sigmund stop'
@@ -131,6 +133,8 @@ def determine_packages():
     in the neutron_plugins dictionary in charmhelpers.
     '''
     pkgs = []
+    pkgs.extend(docker_dependencies())
+    pkgs.append('docker-engine')
     tag = 'latest'
     for pkg in neutron_plugin_attribute('plumgrid', 'packages', 'neutron'):
         if 'plumgrid' in pkg:
@@ -149,6 +153,37 @@ def determine_packages():
                     % (tag, pkg)
                 raise ValueError(error_msg)
     return pkgs
+
+
+def docker_dependencies():
+    '''
+    Returns a list of packages to be installed for docker engine
+    '''
+    kver = subprocess.check_output(['uname', '-r']).replace('\n', '')
+    return ['apt-transport-https', 'ca-certificates', 'apparmor',
+            'linux-image-extra-{}'.format(kver)]
+
+
+def docker_configure_sources():
+    '''
+    Imports GPG key and updates apt source for docker engine
+    '''
+    ubuntu_rel = lsb_release()['DISTRIB_CODENAME']
+    DOCKER_SOURCE = ('deb https://apt.dockerproject.org/repo ubuntu-%s'
+                     ' main')
+    cmd = ('apt-key adv --keyserver hkp://p80.pool.sks-keyservers.net:80'
+           ' --recv-keys 58118E89F3A912897C070ADBF76221572C52609D')
+    log('Importing GPG for docker engine')
+    try:
+        subprocess.check_call(cmd, shell=True)
+    except:
+        raise ValueError('Error importing docker GPG Key')
+    try:
+        with open('/etc/apt/sources.list.d/docker.list', 'w') as f:
+            f.write(DOCKER_SOURCE % ubuntu_rel)
+        f.close()
+    except:
+        log('Unable to update /etc/apt/sources.list.d/docker.list')
 
 
 def register_configs(release=None):
