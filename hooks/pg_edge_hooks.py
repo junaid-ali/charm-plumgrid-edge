@@ -39,7 +39,6 @@ from pg_edge_utils import (
     restart_on_change,
     director_cluster_ready,
     configure_pg_sources,
-    configure_analyst_opsvm,
     docker_configure_sources
 )
 
@@ -75,7 +74,6 @@ def director_changed():
     '''
     if director_cluster_ready():
         ensure_mtu()
-        configure_analyst_opsvm()
         CONFIGS.write_all()
 
 

@@ -108,8 +108,8 @@ def configure_analyst_opsvm():
     if not service_running('plumgrid'):
         restart_pg()
     opsvm_ip = pg_edge_context._pg_dir_context()['opsvm_ip']
-    NS_ENTER = ('/opt/local/bin/nsenter -t $(ps ho pid --ppid '
-                '$(cat /var/run/libvirt/lxc/plumgrid.pid)) -m -n -u -i -p ')
+    NS_ENTER = ('/opt/local/bin/nsenter -t $(ps ho pid --ppid $(cat'
+                '/var/run/libvirt/lxc/plumgrid.pid)) -m -n -u -i -p ')
     sigmund_stop = NS_ENTER + '/usr/bin/service plumgrid-sigmund stop'
     sigmund_status = NS_ENTER \
         + '/usr/bin/service plumgrid-sigmund status'
@@ -171,19 +171,17 @@ def docker_configure_sources():
     ubuntu_rel = lsb_release()['DISTRIB_CODENAME']
     DOCKER_SOURCE = ('deb https://apt.dockerproject.org/repo ubuntu-%s'
                      ' main')
-    cmd = ('apt-key adv --keyserver hkp://p80.pool.sks-keyservers.net:80'
-           ' --recv-keys 58118E89F3A912897C070ADBF76221572C52609D')
-    log('Importing GPG for docker engine')
-    try:
-        subprocess.check_call(cmd, shell=True)
-    except:
-        raise ValueError('Error importing docker GPG Key')
+    log('Importing GPG Key for docker engine')
+    _exec_cmd(['apt-key', 'adv', '--keyserver',
+               'hkp://p80.pool.sks-keyservers.net:80',
+               '--recv-keys', '58118E89F3A912897C070ADBF76221572C52609D'])
     try:
         with open('/etc/apt/sources.list.d/docker.list', 'w') as f:
             f.write(DOCKER_SOURCE % ubuntu_rel)
         f.close()
     except:
-        log('Unable to update /etc/apt/sources.list.d/docker.list')
+        raise ValueError('Unable to update /etc/apt/sources.list.d/'
+                         'docker.list')
 
 
 def register_configs(release=None):
@@ -509,10 +507,6 @@ def restart_on_change(restart_map):
             f(*args, **kwargs)
             for path in restart_map:
                 if path_hash(path) != checksums[path]:
-                    if path == OPS_CONF:
-                        from pg_edge_context import _pg_dir_context
-                        opsvm_ip = _pg_dir_context()['opsvm_ip']
-                        configure_analyst_opsvm(opsvm_ip)
                     restart_pg()
                     break
         return wrapped_f
