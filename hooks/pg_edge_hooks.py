@@ -38,7 +38,8 @@ from pg_edge_utils import (
     load_iptables,
     restart_on_change,
     director_cluster_ready,
-    configure_pg_sources
+    configure_pg_sources,
+    docker_configure_sources
 )
 
 hooks = Hooks()
@@ -52,6 +53,7 @@ def install():
     '''
     status_set('maintenance', 'Executing pre-install')
     load_iptables()
+    docker_configure_sources()
     configure_sources(update=True)
     status_set('maintenance', 'Installing apt packages')
     pkgs = determine_packages()
@@ -73,6 +75,16 @@ def director_changed():
     if director_cluster_ready():
         ensure_mtu()
         CONFIGS.write_all()
+
+
+@hooks.hook('plumgrid-relation-joined')
+def edge_node_joined(relation_id=None):
+    '''
+    This hook is run when relation between plumgrid-edge and
+    plumgrid-director is made.
+    '''
+    rel_data = {'edge-peer': 'edge-peer'}
+    relation_set(relation_id=relation_id, **rel_data)
 
 
 @hooks.hook('neutron-plugin-relation-joined')
