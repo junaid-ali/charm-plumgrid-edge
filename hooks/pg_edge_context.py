@@ -29,8 +29,7 @@ def _pg_dir_context():
             if 'dir_ip' in rdata:
                 ctxt['director_ips'].append(str(rdata['dir_ip']))
             if "opsvm_ip" in rdata:
-                ctxt['opsvm_ip'] = \
-                    rdata['opsvm_ip']
+                ctxt['opsvm_ip'] = rdata['opsvm_ip']
     return ctxt
 
 
