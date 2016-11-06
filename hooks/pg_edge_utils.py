@@ -6,6 +6,7 @@ import pg_edge_context
 import subprocess
 import time
 import os
+import platform
 import json
 from collections import OrderedDict
 from socket import gethostname as get_unit_hostname
@@ -29,7 +30,6 @@ from charmhelpers.contrib.network.ip import (
 )
 from charmhelpers.core.host import (
     write_file,
-    service_restart,
     service_start,
     service_stop,
     service_running,
@@ -47,7 +47,6 @@ from charmhelpers.contrib.openstack.utils import (
 
 SOURCES_LIST = '/etc/apt/sources.list'
 SHARED_SECRET = "/etc/nova/secret.txt"
-LXC_CONF = '/etc/libvirt/lxc.conf'
 TEMPLATES = 'templates/'
 PG_DATA_PATH = '/var/lib/plumgrid/plumgrid-data'
 PG_CONF = '%s/conf/pg/plumgrid.conf' % PG_DATA_PATH
@@ -59,6 +58,7 @@ AUTH_KEY_PATH = '%s/root/.ssh/authorized_keys' % PG_DATA_PATH
 SUDOERS_CONF = '/etc/sudoers.d/ifc_ctl_sudoers'
 FILTERS_CONF_DIR = '/etc/nova/rootwrap.d'
 FILTERS_CONF = '%s/network.filters' % FILTERS_CONF_DIR
+IFC_LIST_GW = '/var/run/plumgrid/ifc_list_gateway'
 
 BASE_RESOURCE_MAP = OrderedDict([
     (PG_CONF, {
@@ -132,11 +132,23 @@ def determine_packages():
     return pkgs
 
 
+def get_unit_address(binding='internal'):
+    '''
+    Returns the unit's PLUMgrid Management/Fabric IP
+    '''
+    try:
+        # Using Juju 2.0 network spaces feature
+        return network_get_primary_address(binding)
+    except NotImplementedError:
+        # Falling back to private-address
+        return unit_get('private-address')
+
+
 def docker_dependencies():
     '''
     Returns a list of packages to be installed for docker engine
     '''
-    kver = subprocess.check_output(['uname', '-r']).replace('\n', '')
+    kver = platform.release()
     return ['apt-transport-https', 'ca-certificates', 'apparmor',
             'linux-image-extra-{}'.format(kver)]
 
@@ -159,18 +171,6 @@ def docker_configure_sources():
     except:
         raise ValueError('Unable to update /etc/apt/sources.list.d/'
                          'docker.list')
-
-
-def get_unit_address(binding='internal'):
-    '''
-    Returns the unit's PLUMgrid Management/Fabric IP
-    '''
-    try:
-        # Using Juju 2.0 network spaces feature
-        return network_get_primary_address(binding)
-    except NotImplementedError:
-        # Falling back to private-address
-        return unit_get('private-address')
 
 
 def register_configs(release=None):
@@ -210,9 +210,6 @@ def ensure_files():
     '''
     Ensures PLUMgrid specific files exist before templates are written.
     '''
-    release = os_release('nova-compute', base='kilo')
-    if release == 'kilo':
-        disable_apparmor_libvirt()
     write_file(SUDOERS_CONF,
                "\nnova ALL=(root) NOPASSWD: /opt/pg/bin/ifc_ctl_pp *\n",
                owner='root', group='root', perms=0o644)
@@ -228,16 +225,18 @@ def restart_pg():
     service_start('plumgrid')
     time.sleep(3)
     if not service_running('plumgrid'):
-        if service_running('docker-engine'):
+        if service_running('docker'):
             raise ValueError("plumgrid service couldn't be started")
         else:
-            if service_start('docker-engine'):
+            if service_start('docker'):
                 time.sleep(8)
                 if not service_running('plumgrid') \
                         and not service_start('plumgrid'):
+                    status_set('blocked', 'plumgrid service not running')
                     raise ValueError("plumgrid service couldn't be started")
             else:
-                raise ValueError("docker-engine couldn't be started")
+                status_set('blocked', 'docker service not running')
+                raise ValueError("docker couldn't be started")
     status_set('active', 'Unit is ready')
 
 
@@ -285,7 +284,7 @@ def get_mgmt_interface():
     mgmt_interface = config('mgmt-interface')
     if not mgmt_interface:
         try:
-            return get_iface_from_addr(get_unit_address())
+            return get_iface_from_addr(get_unit_address('internal'))
         except:
             # workaroud if get_unit_address returns hostname
             # (issue with unit-get 'private-address') also
@@ -320,39 +319,49 @@ def fabric_interface_changed():
     return True
 
 
+def remove_ifc_list():
+    '''
+    Removes ifc_list_gateway file if fabric interface is changed
+    '''
+    _exec_cmd(cmd=['rm', '-f', IFC_LIST_GW])
+
+
 def get_fabric_interface():
     '''
     Returns the fabric interface.
     '''
     fabric_interfaces = config('fabric-interfaces')
-    if fabric_interfaces == 'MANAGEMENT':
-        return get_mgmt_interface()
-    elif fabric_interfaces == 'BIND':
+    if not fabric_interfaces:
         try:
-            return get_iface_from_addr(get_unit_address('fabric'))
+            fabric_ip = get_unit_address('fabric')
+            mgmt_ip = get_unit_address('internal')
         except:
             raise ValueError('Unable to get interface using \'fabric\' \
                               binding! Ensure fabric interface has IP \
                               assigned.')
+        if fabric_ip == mgmt_ip:
+            return get_mgmt_interface()
+        else:
+            return get_iface_from_addr(fabric_ip)
     else:
         try:
             all_fabric_interfaces = json.loads(fabric_interfaces)
         except ValueError:
             raise ValueError('Invalid json provided for fabric interfaces')
-        hostname = get_unit_hostname()
-        if hostname in all_fabric_interfaces:
-            node_fabric_interface = all_fabric_interfaces[hostname]
-        elif 'DEFAULT' in all_fabric_interfaces:
-            node_fabric_interface = all_fabric_interfaces['DEFAULT']
-        else:
-            raise ValueError('No fabric interface provided for node')
-        if interface_exists(node_fabric_interface):
-            return node_fabric_interface
-        else:
-            log('Provided fabric interface %s does not exist'
-                % node_fabric_interface)
-            raise ValueError('Provided fabric interface does not exist')
+    hostname = get_unit_hostname()
+    if hostname in all_fabric_interfaces:
+        node_fabric_interface = all_fabric_interfaces[hostname]
+    elif 'DEFAULT' in all_fabric_interfaces:
+        node_fabric_interface = all_fabric_interfaces['DEFAULT']
+    else:
+        raise ValueError('No fabric interface provided for node')
+    if interface_exists(node_fabric_interface):
         return node_fabric_interface
+    else:
+        log('Provided fabric interface %s does not exist'
+            % node_fabric_interface)
+        raise ValueError('Provided fabric interface does not exist')
+    return node_fabric_interface
 
 
 def ensure_mtu():
@@ -390,38 +399,6 @@ def _exec_cmd(cmd=None, error_msg='Command exited with ERRORs', fatal=False,
                     subprocess.check_call(cmd)
             except subprocess.CalledProcessError:
                 log(error_msg)
-
-
-# should we remove this method now?
-def disable_apparmor_libvirt():
-    '''
-    Disables Apparmor profile of libvirtd.
-    '''
-    apt_install('apparmor-utils')
-    apt_install('cgroup-bin')
-    _exec_cmd(['sudo', 'aa-disable', '/usr/sbin/libvirtd'],
-              error_msg='Error disabling AppArmor profile of libvirtd',
-              verbose=True)
-    disable_apparmor()
-    service_restart('libvirt-bin')
-
-
-def disable_apparmor():
-    '''
-    Disables Apparmor security for lxc.
-    '''
-    try:
-        f = open(LXC_CONF, 'r')
-    except IOError:
-        log('Libvirt not installed yet')
-        return 0
-    filedata = f.read()
-    f.close()
-    newdata = filedata.replace("security_driver = \"apparmor\"",
-                               "#security_driver = \"apparmor\"")
-    f = open(LXC_CONF, 'w')
-    f.write(newdata)
-    f.close()
 
 
 def add_lcm_key():

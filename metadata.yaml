@@ -8,9 +8,8 @@ description: |
   instances. Communication between instances on compute nodes is enabled
   by creation of VXLAN based overlay tunnels and networks.
 series:
-  - xenial
-  - yakkety
   - trusty
+  - xenial
 tags:
   - openstack
 extra-bindings:
