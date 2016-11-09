@@ -5,6 +5,7 @@ options:
     description: Public SSH key of PLUMgrid LCM which is running PG-Tools
   mgmt-interface:
     type: string
+    default:
     description: The interface connected to PLUMgrid Managment network.
   fabric-interfaces:
     default: 'MANAGEMENT'
@@ -40,3 +41,8 @@ options:
     default: 'plumgrid'
     type: string
     description: Provide a key to be used as the metadata shared key
+  docker-key-server:
+    default:
+    type: string
+    description:
+       Keyserver to be used for retrieving docker PGP key

@@ -21,6 +21,8 @@ from charmhelpers.core.hookenv import (
 )
 from charmhelpers.contrib.network.ip import (
     get_iface_from_addr,
+    get_host_ip,
+    get_iface_addr,
     get_bridges,
     get_bridge_nics,
 )
@@ -101,32 +103,6 @@ def configure_pg_sources():
         log('Unable to update /etc/apt/sources.list')
 
 
-def configure_analyst_opsvm():
-    '''
-    Configures Anaylyst for OPSVM
-    '''
-    if not service_running('plumgrid'):
-        restart_pg()
-    opsvm_ip = pg_edge_context._pg_dir_context()['opsvm_ip']
-    NS_ENTER = ('/opt/local/bin/nsenter -t $(ps ho pid --ppid $(cat '
-                '/var/run/libvirt/lxc/plumgrid.pid)) -m -n -u -i -p ')
-    sigmund_stop = NS_ENTER + '/usr/bin/service plumgrid-sigmund stop'
-    sigmund_status = NS_ENTER \
-        + '/usr/bin/service plumgrid-sigmund status'
-    sigmund_autoboot = NS_ENTER \
-        + '/usr/bin/sigmund-configure --ip {0} --start --autoboot' \
-        .format(opsvm_ip)
-    try:
-        status = subprocess.check_output(sigmund_status, shell=True)
-        if 'start/running' in status:
-            if subprocess.call(sigmund_stop, shell=True):
-                log('plumgrid-sigmund couldn\'t be stopped!')
-                return
-        subprocess.check_call(sigmund_autoboot, shell=True)
-    except:
-        log('plumgrid-sigmund couldn\'t be started!')
-
-
 def determine_packages():
     '''
     Returns list of packages required by PLUMgrid Edge as specified
@@ -173,8 +149,8 @@ def docker_configure_sources():
                      ' main')
     log('Importing GPG Key for docker engine')
     _exec_cmd(['apt-key', 'adv', '--keyserver',
-               'hkp://p80.pool.sks-keyservers.net:80',
-               '--recv-keys', '58118E89F3A912897C070ADBF76221572C52609D'])
+               config('docker-key-server'), '--recv-keys',
+               '58118E89F3A912897C070ADBF76221572C52609D'])
     try:
         with open('/etc/apt/sources.list.d/docker.list', 'w') as f:
             f.write(DOCKER_SOURCE % ubuntu_rel)
@@ -239,16 +215,16 @@ def restart_pg():
     service_start('plumgrid')
     time.sleep(3)
     if not service_running('plumgrid'):
-        if service_running('libvirt-bin'):
+        if service_running('docker-engine'):
             raise ValueError("plumgrid service couldn't be started")
         else:
-            if service_start('libvirt-bin'):
+            if service_start('docker-engine'):
                 time.sleep(8)
                 if not service_running('plumgrid') \
                         and not service_start('plumgrid'):
                     raise ValueError("plumgrid service couldn't be started")
             else:
-                raise ValueError("libvirt-bin service couldn't be started")
+                raise ValueError("docker-engine couldn't be started")
     status_set('active', 'Unit is ready')
 
 
@@ -295,6 +271,13 @@ def get_mgmt_interface():
     '''
     mgmt_interface = config('mgmt-interface')
     if not mgmt_interface:
+        try:
+            return get_iface_from_addr(unit_get('private-address'))
+        except:
+            for bridge_interface in get_bridges():
+                if (get_host_ip(unit_get('private-address'))
+                        in get_iface_addr(bridge_interface)):
+                    return bridge_interface
         return get_iface_from_addr(unit_get('private-address'))
     elif interface_exists(mgmt_interface):
         return mgmt_interface
