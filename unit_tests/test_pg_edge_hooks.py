@@ -35,7 +35,8 @@ TO_PATCH = [
     'director_cluster_ready',
     'status_set',
     'remove_ifc_list',
-    'docker_configure_sources'
+    'docker_configure_sources',
+    'get_unit_address'
 ]
 NEUTRON_CONF_DIR = "/etc/neutron"
 

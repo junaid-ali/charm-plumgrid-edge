@@ -40,7 +40,8 @@ from pg_edge_utils import (
     director_cluster_ready,
     configure_pg_sources,
     remove_ifc_list,
-    docker_configure_sources
+    docker_configure_sources,
+    get_unit_address
 )
 
 hooks = Hooks()
@@ -84,7 +85,7 @@ def edge_node_joined(relation_id=None):
     This hook is run when relation between plumgrid-edge and
     plumgrid-director is made.
     '''
-    rel_data = {'edge-peer': 'edge-peer'}
+    rel_data = {'edge_ip': get_unit_address()}
     relation_set(relation_id=relation_id, **rel_data)
 
 
